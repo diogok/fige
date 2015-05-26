@@ -1,0 +1,174 @@
+#!/usr/bin/env ruby
+
+require 'yaml'
+require 'optparse'
+
+@options = {}
+
+@options = {}
+if ENV["HOST"] then
+  @options[:host] = ENV["HOST"]
+else
+  @options[:host] = `hostname -I | awk '{ print $1 }'`.gsub("\n","")
+end
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: command [options]"
+  opts.on("-h", "--host host", "Set host IP/domain") do |h|
+      @options[:host] = h
+  end
+  opts.on("-d", "--data FOO=BAR,FUZ=BAZ",Array, "Insert data into each env") do |d|
+      @options[:data] = d
+  end
+  opts.on("-c","--command cmd","A command to execute after each run") do |c|
+    @options[:cmd]=c
+  end
+  opts.on("-f","--foreground","Keep running on foregroud. Default is run once and exit.") do |f|
+    @options[:foreground]=f
+  end
+  opts.on("-t","--target name","Target a single container") do |t|
+    @options[:target]=t
+  end
+  opts.on("-i","--input file","Input file") do |i|
+    @options[:input]=i
+  end
+  opts.on("-u","--update","pull container") do |p|
+    @options[:update]=p
+  end
+  opts.on("-a","--apend cmd","Append cmd to docker command, before the '-t repo/image'") do |a|
+    @options[:append]=a
+  end
+  opts.on("-n","--dry","Dry run, does no execute only echo commands") do |n|
+    @options[:dry]=true
+  end
+end.parse!
+
+file = @options[:input] || 'docker-compose.yml'
+yml = YAML.load_file(file)
+
+env = { 'HOST'=>@options[:host] }
+
+@options[:containers]=[]
+
+apps=[]
+if @options[:target] then
+  apps=yml.keys.select {|k| k == @options[:target]}
+else
+    apps=yml.keys
+end
+
+apps.each {|k|
+
+  if !yml[k].has_key? "name" then
+    yml[k]['name'] = yml[k]['image'].gsub(/[^\/]+\//,'')
+  end
+
+  if !@options[:dry] then
+    puts `docker stop #{yml[k]['name']} 2> /dev/null`
+    puts `docker rm #{yml[k]['name']} 2> /dev/null`
+  end
+
+  if !yml[k].has_key? "environment" then
+    yml[k]['environment'] = {}
+  end
+
+  env.keys.each{ |ke|
+    yml[k]['environment'][ke] = env[ke]
+  }
+
+  cmd = "docker run -d "
+  cmd << " --name #{yml[k]['name']} "
+
+  if yml[k].has_key? "ports" then
+    yml[k]['ports'].each {|p|
+      cmd << " -p #{p} "
+    }
+  end
+
+  if yml[k].has_key? "links" then
+    yml[k]['links'].each {|l|
+      cmd << " --link #{l} "
+    }
+  end
+
+  if yml[k].has_key? "volumes" then
+    yml[k]['volumes'].each {|v|
+      cmd << " -v #{v} "
+    }
+  end
+
+  if yml[k].has_key? "env" then
+    yml[k]['env'].each {|e|
+      cmd << " -e \"#{e}\" "
+    }
+  end
+
+  if yml[k].has_key? "environment" then
+    yml[k]['environment'].keys.each {|ke|
+      cmd << " -e \"#{ke}=#{yml[k]['environment'][ke].gsub('"','\"')}\" "
+    }
+  end
+
+  if yml[k].has_key? "hostname" then
+    if @options[:host] then
+      cmd << " --hostname=\"#{@options[:host]}_#{yml[k]["hostname"]}\" "
+    else
+      cmd << " --hostname=\"#{yml[k]["hostname"]}\" "
+    end
+  elsif @options[:host] then
+    cmd << " --hostname=\"#{@options[:host]}_#{yml[k]["name"]}\" "
+  end
+
+  if yml[k].has_key? "restart" then
+    cmd << " --restart #{yml[k]["restart"]} "
+  end
+
+  if @options[:data] then
+    @options[:data].each {|d|
+        cmd << " -e \"#{d}\" "
+    }
+  end
+  
+  if @options[:append] then
+    cmd << @options[:append]
+  end
+
+  cmd << " #{yml[k]['image']} "
+
+  if yml[k].has_key? "command" then
+    cmd << " #{yml[k]["command"]}  "
+  end
+
+  if !@options[:dry] && @options[:update] then
+    `docker pull #{yml[k]['image']} > /dev/null 2>&1`
+  end
+
+  puts cmd
+  if !@options[:dry] then
+    cid = `#{cmd}`
+    @options[:containers].push(cid)
+    puts "#{yml[k]['name']} = #{cid}"
+  end
+
+  if @options[:cmd] then
+      puts `#{@options[:cmd]}`
+  end
+
+}
+
+if @options[:foreground] then
+  def stop()
+    puts "Stopping..."
+    @options[:containers].each {|cid|
+      puts `docker stop #{cid}`
+      puts `docker rm #{cid}`
+    }
+    exit
+  end
+  trap('SIGINT') do stop() end
+  trap('SIGTERM') do stop() end
+  while true do
+    sleep 5
+  end
+end
+
