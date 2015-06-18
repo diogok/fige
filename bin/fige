@@ -123,6 +123,10 @@ apps.each {|k|
     cmd << " --restart #{yml[k]["restart"]} "
   end
 
+  if yml[k].has_key? "pid" then
+    cmd << " --pid #{yml[k]["pid"]} "
+  end
+
   if @options[:data] then
     @options[:data].each {|d|
         cmd << " -e \"#{d}\" "

@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
     s.name        = "fige"
-    s.version     = "0.0.2"
+    s.version     = "0.0.3"
     s.date        = "2015-05-25"
     s.summary     = "Docker-compose/fig clone, simplified."
     s.description = "Run docker containers out of a docker-compose.yml"
